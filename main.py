@@ -5,6 +5,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
 from fastapi import FastAPI, UploadFile, File, Form
 from PIL import Image
@@ -50,8 +51,8 @@ print("Models loaded successfully.")
 
 def preprocess_image(image: Image.Image):
     image = image.resize((IMG_SIZE, IMG_SIZE))
-    image = np.array(image).astype("float32") / 255.0
-    image = np.expand_dims(image, axis=0)
+    image = np.array(image).astype("float32")
+    image = preprocess_input(image)
     return image
 
 
@@ -64,9 +65,32 @@ def health_check():
     return {"status": "API is running successfully"}
 
 
+## TTA
+def predict_with_tta(image):
+    
+    # Original
+    img1 = preprocess_image(image)
+
+    # Horizontal flip
+    img2 = preprocess_image(image.transpose(Image.FLIP_LEFT_RIGHT))
+
+    # Slight rotation
+    img3 = preprocess_image(image.rotate(10))
+    img4 = preprocess_image(image.rotate(-10))
+
+    images = np.stack([img1, img2, img3, img4], axis=0)
+
+    preds = vision_model.predict(images, verbose=0)
+
+    # Average predictions
+    final_pred = np.mean(preds, axis=0)
+
+    return final_pred
+
 # ---------------------------------
 # Prediction Endpoint
 # ---------------------------------
+
 
 @app.post("/predict")
 async def predict(
@@ -83,7 +107,7 @@ async def predict(
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     image_array = preprocess_image(image)
 
-    preds = vision_model.predict(image_array, verbose=0)
+    preds = predict_with_tta(image)
     stage_index = int(np.argmax(preds))
     stage_label = class_names[stage_index]
     confidence = float(np.max(preds))
